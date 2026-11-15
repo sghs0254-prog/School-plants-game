@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>가이즈카향나무 스마트 가디언 - 학교 주변 수목 탐구 게임</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Jua&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+            background-color: #0f172a;
+        }
+        .game-title {
+            font-family: 'Jua', sans-serif;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+        }
+        .btn-game {
+            transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 0 rgba(0, 0, 0, 0.35);
+        }
+        .btn-game:active:not(:disabled) {
+            transform: translateY(3px);
+            box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+        }
+        .btn-game:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+            filter: grayscale(80%);
+        }
+        @keyframes floatUp {
+            0% { opacity: 1; transform: translateY(0) scale(1); }
+            100% { opacity: 0; transform: translateY(-45px) scale(1.15); }
+        }
+        .floating-text {
+            position: absolute;
+            pointer-events: none;
+            animation: floatUp 1.1s ease-out forwards;
+            font-weight: bold;
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.9);
+            z-index: 20;
+        }
+        /* 컴퓨터 비전 스캔 라인 애니메이션 */
+        @keyframes scanLine {
+            0% { top: 10%; }
+            50% { top: 85%; }
+            100% { top: 10%; }
+        }
+        .scanner-bar {
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: #38bdf8;
+            box-shadow: 0 0 12px #38bdf8, 0 0 20px #0284c7;
+            animation: scanLine 1.5s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body class="w-screen h-screen flex flex-col justify-between bg-slate-900 text-white">
+
+    <!-- 상단 상태바 (HUD) -->
+    <header class="w-full bg-slate-800/95 backdrop-blur-md border-b border-slate-700 p-2 sm:p-3 flex flex-wrap justify-between items-center z-10 shadow-lg">
+        <div class="flex items-center space-x-2 sm:space-x-3">
+            <h1 class="game-title text-lg sm:text-xl text-emerald-400 tracking-wider flex items-center gap-1.5">
+                <span>🌲</span> 가이즈카향나무 가디언
+            </h1>
+            <div class="bg-slate-700/90 px-2.5 py-1 rounded-full text-xs font-bold text-amber-300 border border-amber-500/30">
+                Day <span id="day-display">1</span>/7 (<span id="time-display">낮</span>)
+            </div>
+        </div>
+
+        <!-- 자원 및 생태 지표 표시 영역 -->
+        <div class="flex items-center space-x-2 sm:space-x-4 mt-1 sm:mt-0">
+            <!-- 광합성 에너지 -->
+            <div class="flex items-center space-x-1 bg-slate-900/70 px-2 py-1 rounded-lg border border-yellow-500/30" title="광합성 에너지">
+                <span class="text-sm sm:text-base">☀️</span>
+                <span id="sun-display" class="font-bold text-yellow-400 text-xs sm:text-sm">50</span>
+            </div>
+            <!-- 토양 수분 (정전용량형 토양수분센서 컨셉) -->
+            <div class="flex items-center space-x-1 bg-slate-900/70 px-2 py-1 rounded-lg border border-sky-500/30" title="토양 수분 함량">
+                <span class="text-sm sm:text-base">💧</span>
+                <span id="water-display" class="font-bold text-sky-400 text-xs sm:text-sm">50</span>
+            </div>
+            <!-- 통풍 및 잎 밀도 상태 -->
+            <div class="flex items-center space-x-1 bg-slate-900/70 px-2 py-1 rounded-lg border border-teal-500/30" title="내부 통풍률 (낮을수록 응애 발생 위험 증가)">
+                <span class="text-sm sm:text-base">💨</span>
+                <span id="vent-display" class="font-bold text-teal-300 text-xs sm:text-sm">100%</span>
+            </div>
+            <!-- 나무 건강도 -->
+            <div class="flex items-center space-x-1 bg-slate-900/70 px-2 py-1 rounded-lg border border-rose-500/30" title="수목 건강도">
+                <span class="text-sm sm:text-base">❤️</span>
+                <span id="hp-display" class="font-bold text-rose-400 text-xs sm:text-sm">100</span>
+            </div>
+            <!-- 탐구 노트(자료조사 열람) 버튼 -->
+            <button id="note-btn" class="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 shadow">
+                <span>📚</span> 탐구노트
+            </button>
+            <button id="sound-toggle" class="p-1 bg-slate-700 hover:bg-slate-600 rounded-lg text-xs" title="효과음 켜기/끄기">
+                🔊
+            </button>
+        </div>
+    </header>
+
+    <!-- 메인 게임 캔버스 영역 -->
+    <main class="relative flex-1 w-full overflow-hidden" id="canvas-container">
+        <canvas id="gameCanvas"></canvas>
+        
+        <!-- 생태 알림 배너 -->
+        <div id="event-banner" class="absolute top-3 left-1/2 transform -translate-x-1/2 bg-slate-900/90 border border-emerald-500/50 text-emerald-200 px-4 py-1.5 rounded-full text-xs sm:text-sm font-medium shadow-xl transition-opacity duration-300 pointer-events-none text-center max-w-[92%] z-10">
+            가이즈카향나무는 비늘잎이 빽빽해 주기적인 가지치기(통풍)가 중요합니다!
+        </div>
+
+        <!-- AI 컴퓨터 비전 수종 판별 미니게임 오버레이 -->
+        <div id="vision-modal" class="hidden absolute inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center z-30 p-4">
+            <div class="bg-slate-800 border-2 border-sky-400 rounded-2xl max-w-md w-full p-5 text-center shadow-2xl relative overflow-hidden">
+                <div class="text-xs font-bold text-sky-400 tracking-widest uppercase mb-1">COMPUTER VISION SCANNER</div>
+                <h3 class="game-title text-2xl text-white mb-2">🔍 AI 수종 판별 분석기</h3>
+                <p class="text-xs text-slate-300 mb-4">
+                    잎의 윤곽선, 배열 패턴, 수피 질감 데이터를 분석하여<br>
+                    <span class="text-emerald-400 font-bold">가이즈카향나무 (Juniperus chinensis 'Kaizuka')</span>를 찾아내세요!
+                </p>
+
+                <!-- 3가지 유사 침엽수 비교 카드 -->
+                <div class="grid grid-cols-3 gap-2 mb-4" id="vision-choices">
+                    <!-- JS로 동적 생성 -->
+                </div>
+
+                <div id="vision-feedback" class="text-xs font-bold h-5 text-amber-300 mb-2"></div>
+                <button id="close-vision-btn" class="text-xs text-slate-400 hover:text-white underline">닫기</button>
+            </div>
+        </div>
+
+        <!-- 탐구 자료조사 노트 모달 (사용자 제공 조사 내용 반영) -->
+        <div id="note-modal" class="hidden absolute inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center z-40 p-4">
+            <div class="bg-slate-800 border-2 border-indigo-400/60 rounded-2xl max-w-lg w-full max-h-[85vh] flex flex-col shadow-2xl">
+                <div class="p-4 border-b border-slate-700 flex justify-between items-center">
+                    <h3 class="game-title text-xl text-indigo-300 flex items-center gap-2">
+                        <span>🌲</span> 학교 주변 수목 탐구 보고서
+                    </h3>
+                    <button id="close-note-btn" class="bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded-lg text-xs font-bold">닫기 ✕</button>
+                </div>
+                <div class="p-4 overflow-y-auto text-left text-xs sm:text-sm space-y-4 text-slate-200 leading-relaxed">
+                    <div class="bg-slate-900/70 p-3 rounded-xl border border-emerald-500/30">
+                        <h4 class="font-bold text-emerald-400 mb-1">1. 가이즈카향나무 (Juniperus chinensis 'Kaizuka')</h4>
+                        <ul class="list-disc pl-4 space-y-1 text-slate-300">
+                            <li><strong>분류:</strong> 겉씨식물 구과목 측백나무과 (상록 침엽 교목)</li>
+                            <li><strong>형태·생태:</strong> 작고 두꺼운 비늘잎(인엽)이 가지를 빽빽하게 감싸며 위로 솟구치듯 불규칙하게 비틀리는 수형을 가집니다. 내공해성과 내한성이 강하지만, 잎 밀도가 높아 내부 통풍이 안 되면 속잎이 마르거나 <strong>응애</strong> 같은 병충해가 생기기 쉽습니다.</li>
+                        </ul>
+                    </div>
+
+                    <div class="bg-slate-900/70 p-3 rounded-xl border border-sky-500/30">
+                        <h4 class="font-bold text-sky-400 mb-1">2. 💻 관련 IT·공학: 이미지 분석 수목 판별 원리</h4>
+                        <p class="text-slate-300">
+                            일반 향나무나 측백나무와 겉모습이 비슷해 맨눈으로 구별하기 어렵습니다. 스마트폰 카메라 기반 <strong>컴퓨터 비전(Computer Vision)</strong> 기술은 사진 속 <strong>잎의 윤곽선, 잎차례 배열 패턴, 수피의 질감 데이터</strong>를 추출하여 식물 데이터베이스와 대조함으로써 수종을 판별합니다.
+                        </p>
+                    </div>
+
+                    <div class="bg-slate-900/70 p-3 rounded-xl border border-rose-500/30">
+                        <h4 class="font-bold text-rose-400 mb-1">3. 🩺 의학·생명과학: 피톤치드(테르펜류) 작용과 과학적 해석</h4>
+                        <ul class="list-disc pl-4 space-y-1 text-slate-300">
+                            <li><strong>방어 기전:</strong> 침엽수가 해충·병원균으로부터 자신을 방어하기 위해 내뿜는 휘발성 유기화합물(테르펜/피톤치드)은 항균 작용을 하며, 인체 흡입 시 코르티솔(스트레스 호르몬) 감소에 도움을 줍니다.</li>
+                            <li><strong>과학적 해석 기준:</strong> 원예 품종 자체를 약용으로 오해해서는 안 되며, 세포 실험(in vitro)이나 소규모 시험 결과만으로 탈모 치료제 등으로 단정할 수 없고 대규모 임상시험 검증이 필수적입니다.</li>
+                        </ul>
+                    </div>
+
+                    <div class="text-[11px] text-slate-400 border-t border-slate-700 pt-2">
+                        <strong>참고 출처:</strong> 산림청 국가생물종지식정보시스템(NATURE), 서울대 산림과학부 도시 가로수 컴퓨터비전 연구, 정전용량형 토양수분센서 관수 제어 연구
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 시작 / 종료 모달 창 -->
+        <div id="game-modal" class="absolute inset-0 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center z-30 p-4">
+            <div class="bg-slate-800 border-2 border-emerald-500/50 rounded-2xl max-w-md w-full p-6 text-center shadow-2xl">
+                <div class="text-5xl mb-2">🌲🔬</div>
+                <h2 id="modal-title" class="game-title text-2xl sm:text-3xl text-emerald-400 mb-2">가이즈카향나무 가디언</h2>
+                <p id="modal-desc" class="text-slate-300 text-xs sm:text-sm mb-5 leading-relaxed">
+                    학교 교정의 조경수 <strong>가이즈카향나무</strong>를 스마트하게 관리하세요!<br><br>
+                    • 빽빽한 비늘잎이 자랄수록 <strong>통풍률(💨)</strong>이 떨어져 <strong>응애(해충)</strong>가 발생합니다.<br>
+                    • <strong>가지치기</strong>로 통풍을 확보하고, <strong>피톤치드(테르펜)</strong>로 해충을 방어하세요!<br>
+                    • <strong>AI 수종 스캔</strong>으로 유사 나무와 구별하면 연구 보너스를 얻습니다.
+                </p>
+                <div id="modal-stats" class="hidden bg-slate-900/80 rounded-xl p-3 mb-5 text-xs sm:text-sm text-slate-300 space-y-1">
+                    <p>관리 완료 일수: <span id="stat-days" class="text-amber-400 font-bold">0</span>일</p>
+                    <p>AI 수종 판별 성공: <span id="stat-scans" class="text-sky-400 font-bold">0</span>회</p>
+                    <p>방어한 응애(해충) 수: <span id="stat-bugs" class="text-rose-400 font-bold">0</span>마리</p>
+                </div>
+                <button id="start-btn" class="btn-game w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold py-3 px-6 rounded-xl text-base sm:text-lg shadow-lg">
+                    교정 나무 관리 시작하기
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <!-- 하단 컨트롤 패널 (생태 관리 및 IT/생명과학 액션 버튼) -->
+    <footer class="w-full bg-slate-800/95 border-t border-slate-700 p-2 sm:p-3 z-10">
+        <div class="max-w-5xl mx-auto grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+            
+            <!-- 1. 수관 생장 & 정전용량형 관수 -->
+            <button id="btn-grow" class="btn-game bg-emerald-700 hover:bg-emerald-600 border border-emerald-500/50 rounded-xl p-2 sm:p-2.5 flex flex-col justify-between">
+                <div class="flex items-center justify-between w-full mb-1">
+                    <span class="font-bold text-xs sm:text-sm text-white">🌲 수관 생장</span>
+                    <span class="text-[10px] bg-slate-900/70 px-1.5 py-0.5 rounded text-emerald-300" id="lvl-tree">Lv.1</span>
+                </div>
+                <div class="text-[11px] text-emerald-200 w-full flex justify-between">
+                    <span>☀️<span id="cost-grow-sun">20</span> 💧<span id="cost-grow-water">20</span></span>
+                    <span class="text-amber-300">통풍 -15%</span>
+                </div>
+            </button>
+
+            <!-- 2. 속잎 통풍 가지치기 (응애 예방) -->
+            <button id="btn-prune" class="btn-game bg-teal-700 hover:bg-teal-600 border border-teal-500/50 rounded-xl p-2 sm:p-2.5 flex flex-col justify-between">
+                <div class="flex items-center justify-between w-full mb-1">
+                    <span class="font-bold text-xs sm:text-sm text-white">✂️ 통풍 가지치기</span>
+                    <span class="text-[10px] bg-slate-900/70 px-1.5 py-0.5 rounded text-teal-300">통풍 +35%</span>
+                </div>
+                <div class="text-[11px] text-teal-200 w-full flex justify-between">
+                    <span>☀️ 15</span>
+                    <span>응애 발생 억제</span>
+                </div>
+            </button>
+
+            <!-- 3. IT·공학: AI 수종 판별 스캔 -->
+            <button id="btn-scan" class="btn-game bg-sky-700 hover:bg-sky-600 border border-sky-400/50 rounded-xl p-2 sm:p-2.5 flex flex-col justify-between">
+                <div class="flex items-center justify-between w-full mb-1">
+                    <span class="font-bold text-xs sm:text-sm text-white">📱 AI 수종 판별</span>
+                    <span class="text-[10px] bg-slate-900/70 px-1.5 py-0.5 rounded text-sky-300" id="scan-cooldown">준비됨</span>
+                </div>
+                <div class="text-[11px] text-sky-200 w-full flex justify-between">
+                    <span>컴퓨터 비전</span>
+                    <span class="text-yellow-300">+자원 보너스</span>
+                </div>
+            </button>
+
+            <!-- 4. 의학·생명과학: 피톤치드(테르펜) 발산 -->
+            <button id="btn-phytoncide" class="btn-game bg-rose-700 hover:bg-rose-600 border border-rose-400/50 rounded-xl p-2 sm:p-2.5 flex flex-col justify-between">
+                <div class="flex items-center justify-between w-full mb-1">
+                    <span class="font-bold text-xs sm:text-sm text-white">🌿 테르펜 방어</span>
+                    <span class="text-[10px] bg-slate-900/70 px-1.5 py-0.5 rounded text-rose-200">피톤치드</span>
+                </div>
+                <div class="text-[11px] text-rose-200 w-full flex justify-between">
+                    <span>☀️25 💧25</span>
+                    <span>해충 제거+치유</span>
+                </div>
+            </button>
+
+        </div>
+    </footer>
+
+    <script>
+        /**
+         * 가이즈카향나무 스마트 가디언 (Kaizuka Juniper Smart Guardian)
+         * - 식물학적 특징: 나선형으로 위로 솟구치는 불꽃 수형 및 빽빽한 인엽(비늘잎) 구현
+         * - 생태 메커니즘: 잎 밀도 증가 -> 내부 통풍률 저하 -> 응애(Mite) 발생률 증가
+         * - IT·공학 요소: 컴퓨터 비전(윤곽선, 잎차례, 수피 질감) 기반 유사 수종 구별 미니게임
+         * - 생명과학 요소: 침엽수의 자기방어 휘발성 물질 테르펜(피톤치드) 방출 기전
+         */
+
+        // --- 1. 사운드 매니저 (Tone.js) ---
+        class SoundManager {
+            constructor() {
+                this.enabled = true;
+                this.initialized = false;
+                this.synth = null;
+                this.polySynth = null;
+            }
+            async init() {
+                if (this.initialized) return;
+                await Tone.start();
+                this.synth = new Tone.Synth({
+                    oscillator: { type: 'sine' },
+                    envelope: { attack: 0.01, decay: 0.15, sustain: 0, release: 0.15 }
+                }).toDestination();
+                this.polySynth = new Tone.PolySynth(Tone.Synth, {
+                    oscillator: { type: 'triangle' },
+                    envelope: { attack: 0.02, decay: 0.25, sustain: 0.1, release: 0.4 }
+                }).toDestination();
+                this.polySynth.volume.value = -8;
+                this.initialized = true;
+            }
+            playAction(notes = ['C4', 'E4', 'G4']) {
+                if (!this.enabled || !this.initialized) return;
+                this.polySynth.triggerAttackRelease(notes, '16n', Tone.now());
+            }
+            playPop(freq = 'A5') {
+                if (!this.enabled || !this.initialized) return;
+                this.synth.triggerAttackRelease(freq, '32n');
+            }
+            playAlert() {
+                if (!this.enabled || !this.initialized) return;
+                this.synth.triggerAttackRelease('C2', '8n');
+            }
+        }
+        const sound = new SoundManager();
+
+        // --- 2. 게임 상태 ---
+        const CONFIG = {
+            DAY_DURATION: 18,
+            TARGET_DAYS: 7
+        };
+
+        let state = {
+            isRunning: false,
+            day: 1,
+            dayTimer: 0,
+            isNight: false,
+            sun: 50,
+            water: 50,
+            hp: 100,
+            ventilation: 100, // 내부 통풍률 (0~100%)
+            treeLevel: 1,
+            growCost: { sun: 20, water: 20 },
+            scanCooldown: 0,
+            phytoncideWave: 0, // 테르펜 파동 애니메이션 반경
+            stats: {
+                bugsKilled: 0,
+                scansSuccess: 0
+            },
+            windTime: 0
+        };
+
+        // --- 3. 캔버스 설정 ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('canvas-container');
+        let width = 0, height = 0, groundY = 0;
+
+        let collectibles = [];
+        let mites = []; // 응애(병충해)
+        let particles = [];
+
+        function resizeCanvas() {
+            const rect = container.getBoundingClientRect();
+            width = rect.width;
+            height = rect.height;
+            canvas.width = width;
+            canvas.height = height;
+            groundY = height * 0.80;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // --- 4. 가이즈카향나무 전용 절차적 렌더링 (나선형 불꽃 수형 + 인엽 다발) ---
+        function drawKaizukaJuniper(ctx, windTime) {
+            const centerX = width / 2;
+            const scale = 0.75 + (state.treeLevel * 0.16);
+            const trunkHeight = Math.min(height * 0.52, 130 * scale);
+            const sway = Math.sin(windTime) * (4 + state.treeLevel);
+
+            ctx.save();
+
+            // 1. 지하 뿌리 및 토양 수분 센서 시각화 (IT/공학 요소)
+            ctx.strokeStyle = '#78553a';
+            ctx.lineWidth = 4;
+            for (let i = -2; i <= 2; i++) {
+                ctx.beginPath();
+                ctx.moveTo(centerX, groundY + 4);
+                ctx.quadraticCurveTo(centerX + i * 25, groundY + 25, centerX + i * 45 * scale, groundY + 45);
+                ctx.stroke();
+            }
+
+            // 정전용량형 토양수분센서 아이콘 표시
+            const sensorX = centerX + 55;
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(sensorX, groundY - 12, 8, 32);
+            ctx.fillStyle = state.water > 20 ? '#38bdf8' : '#ef4444';
+            ctx.beginPath();
+            ctx.arc(sensorX + 4, groundY - 14, 4, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 2. 적갈색 주간(줄기) - 위로 솟구치며 비틀리는 형태
+            ctx.strokeStyle = '#5c3a21';
+            ctx.lineWidth = 10 + state.treeLevel * 2;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(centerX, groundY);
+            ctx.bezierCurveTo(
+                centerX - 15, groundY - trunkHeight * 0.35,
+                centerX + 20 + sway * 0.5, groundY - trunkHeight * 0.7,
+                centerX + sway, groundY - trunkHeight
+            );
+            ctx.stroke();
+
+            // 3. 가이즈카향나무 특유의 불규칙 나선형 비늘잎(인엽) 군집 그리기
+            // 통풍률이 낮으면 속잎이 갈변(황토색)하는 생태적 특징 반영
+            const layers = 7 + state.treeLevel * 2;
+            for (let i = 0; i < layers; i++) {
+                const progress = i / layers; // 0(아래) ~ 1(꼭대기)
+                const spiralAngle = i * 1.3 + windTime * 0.5;
+                
+                // 위로 갈수록 좁아지는 불꽃 형태 수형
+                const maxRadius = (48 * scale) * (1 - progress * 0.72) + 12;
+                const offsetX = Math.sin(spiralAngle) * (maxRadius * 0.55) + (sway * progress);
+                const layerY = groundY - 22 - (progress * trunkHeight * 0.92);
+
+                // 속잎 갈변 효과 (통풍률 50% 미만일 때)
+                if (state.ventilation < 50 && i < layers * 0.6) {
+                    ctx.beginPath();
+                    ctx.arc(centerX + offsetX * 0.5, layerY + 4, maxRadius * 0.65, 0, Math.PI * 2);
+                    ctx.fillStyle = '#92400e'; // 마른 속잎 색
+                    ctx.fill();
+                }
+
+                // 짙은 녹색 비늘잎 다발 (위로 솟구치는 타원형 잎뭉치)
+                ctx.save();
+                ctx.translate(centerX + offsetX, layerY);
+                ctx.rotate(Math.sin(spiralAngle) * 0.35);
+
+                // 입체감을 위한 2중 잎 다발
+                ctx.beginPath();
+                ctx.ellipse(0, 0, maxRadius * 0.62, maxRadius * 0.95, 0, 0, Math.PI * 2);
+                ctx.fillStyle = i % 2 === 0 ? '#15803d' : '#166534';
+                ctx.fill();
+
+                // 햇빛을 받은 밝은 비늘잎 하이라이트
+                ctx.beginPath();
+                ctx.ellipse(-maxRadius * 0.15, -maxRadius * 0.2, maxRadius * 0.35, maxRadius * 0.55, 0, 0, Math.PI * 2);
+                ctx.fillStyle = '#22c55e';
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // 4. 피톤치드(테르펜) 발산 파동 시각화
+            if (state.phytoncideWave > 0) {
+                ctx.beginPath();
+                ctx.arc(centerX, groundY - trunkHeight * 0.5, state.phytoncideWave, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(52, 211, 153, ${Math.max(0, 1 - state.phytoncideWave / 280)})`;
+                ctx.lineWidth = 6;
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+
+        // --- 5. 수집 자원 및 병충해(응애) 클래스 ---
+        class Collectible {
+            constructor(type) {
+                this.type = type; // 'sun' or 'water'
+                this.x = Math.random() * (width - 60) + 30;
+                this.y = -20;
+                this.radius = 17;
+                this.speedY = 0.9 + Math.random() * 0.7;
+                this.wobble = Math.random() * Math.PI * 2;
+            }
+            update() {
+                this.y += this.speedY;
+                this.wobble += 0.05;
+                this.x += Math.sin(this.wobble) * 0.5;
+            }
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius + 4, 0, Math.PI * 2);
+                ctx.fillStyle = this.type === 'sun' ? 'rgba(250, 204, 21, 0.25)' : 'rgba(56, 189, 248, 0.25)';
+                ctx.fill();
+                ctx.font = '22px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.type === 'sun' ? '☀️' : '💧', 0, 0);
+                ctx.restore();
+            }
+        }
+
+        class SpiderMite {
+            constructor() {
+                const fromLeft = Math.random() < 0.5;
+                this.x = fromLeft ? -15 : width + 15;
+                this.y = groundY - 25 - Math.random() * (height * 0.42);
+                this.targetX = width / 2 + (Math.random() - 0.5) * 40;
+                this.targetY = groundY - 40 - Math.random() * 90;
+                this.radius = 16;
+                this.speed = 0.65 + (state.day * 0.1);
+                this.attackTimer = 0;
+            }
+            update() {
+                const dx = this.targetX - this.x;
+                const dy = this.targetY - this.y;
+                const dist = Math.hypot(dx, dy);
+                if (dist > 25) {
+                    this.x += (dx / dist) * this.speed;
+                    this.y += (dy / dist) * this.speed;
+                } else {
+                    this.attackTimer++;
+                    if (this.attackTimer >= 65) {
+                        this.attackTimer = 0;
+                        damageTree(4);
+                        createParticles(this.x, this.y, '#ef4444', 5);
+                    }
+                }
+            }
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(239, 68, 68, 0.35)';
+                ctx.fill();
+                ctx.font = '20px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('🕷️', 0, 0); // 응애 표현
+                ctx.restore();
+            }
+        }
+
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x; this.y = y; this.color = color;
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 1 + Math.random() * 2.5;
+                this.vx = Math.cos(angle) * speed;
+                this.vy = Math.sin(angle) * speed;
+                this.life = 1.0;
+            }
+            update() { this.x += this.vx; this.y += this.vy; this.life -= 0.035; }
+            draw(ctx) {
+                ctx.globalAlpha = Math.max(0, this.life);
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        function createParticles(x, y, color, count = 8) {
+            for (let i = 0; i < count; i++) particles.push(new Particle(x, y, color));
+        }
+
+        function showFloatingText(x, y, text, color = '#fff') {
+            const el = document.createElement('div');
+            el.className = 'floating-text text-xs sm:text-sm';
+            el.style.left = `${x}px`;
+            el.style.top = `${y}px`;
+            el.style.color = color;
+            el.innerText = text;
+            container.appendChild(el);
+            setTimeout(() => el.remove(), 1100);
+        }
+
+        function showBanner(msg) {
+            const banner = document.getElementById('event-banner');
+            banner.innerText = msg;
+        }
+
+        // --- 6. 컴퓨터 비전 AI 수종 판별 미니게임 로직 ---
+        const TREE_DATABASE = [
+            {
+                id: 'kaizuka',
+                name: '가이즈카향나무',
+                icon: '🌲',
+                features: '비늘잎(인엽) 빽빽함 • 불꽃 모양 나선형 수형 • 적갈색 세로 수피',
+                isTarget: true
+            },
+            {
+                id: 'thuja',
+                name: '측백나무',
+                icon: '🌳',
+                features: '잎이 납작하고 수직 평면으로 배열됨 • 가지가 수평으로 퍼짐',
+                isTarget: false
+            },
+            {
+                id: 'pine',
+                name: '소나무',
+                icon: '🎍',
+                features: '2개씩 뭉쳐나는 긴 바늘잎(침엽) • 거북등 모양의 붉은 수피',
+                isTarget: false
+            }
+        ];
+
+        function openVisionScanner() {
+            if (state.scanCooldown > 0 || !state.isRunning) return;
+            const modal = document.getElementById('vision-modal');
+            const choicesContainer = document.getElementById('vision-choices');
+            const feedback = document.getElementById('vision-feedback');
+            
+            feedback.innerText = '비전 센서로 잎의 윤곽선과 배열 패턴을 분석하세요...';
+            choicesContainer.innerHTML = '';
+
+            // 배열 섞기
+            const shuffled = [...TREE_DATABASE].sort(() => Math.random() - 0.5);
+
+            shuffled.forEach(tree => {
+                const card = document.createElement('button');
+                card.className = 'relative bg-slate-900 hover:bg-slate-700 border border-sky-500/40 rounded-xl p-3 flex flex-col items-center text-center transition overflow-hidden';
+                card.innerHTML = `
+                    <div class="scanner-bar"></div>
+                    <div class="text-3xl mb-1">${tree.icon}</div>
+                    <div class="font-bold text-xs text-sky-300 mb-1">후보 샘플</div>
+                    <div class="text-[10px] text-slate-300 leading-tight">${tree.features}</div>
+                `;
+                card.onclick = () => {
+                    if (tree.isTarget) {
+                        sound.playAction(['E4', 'G4', 'B4', 'E5']);
+                        state.sun += 30;
+                        state.water += 30;
+                        state.stats.scansSuccess++;
+                        state.scanCooldown = 15; // 15초 쿨타임
+                        modal.classList.add('hidden');
+                        showFloatingText(width / 2, height * 0.4, 'AI 수종 판별 성공! +30☀️ +30💧', '#38bdf8');
+                        showBanner('✅ 컴퓨터 비전 분석 완료: 가이즈카향나무(Juniperus chinensis Kaizuka) 확인!');
+                        updateUI();
+                    } else {
+                        sound.playAlert();
+                        feedback.innerText = `❌ 오판별! 해당 특징은 [${tree.name}]의 데이터입니다. 다시 분석하세요!`;
+                    }
+                };
+                choicesContainer.appendChild(card);
+            });
+
+            modal.classList.remove('hidden');
+        }
+
+        // --- 7. 상호작용 및 버튼 이벤트 ---
+        canvas.addEventListener('pointerdown', (e) => {
+            if (!state.isRunning) return;
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            // 응애 터치 제거
+            for (let i = mites.length - 1; i >= 0; i--) {
+                const m = mites[i];
+                if (Math.hypot(m.x - x, m.y - y) <= m.radius + 16) {
+                    mites.splice(i, 1);
+                    state.stats.bugsKilled++;
+                    state.sun += 5;
+                    sound.playPop('G3');
+                    createParticles(m.x, m.y, '#ef4444', 8);
+                    showFloatingText(m.x, m.y, '응애 제거! +5☀️', '#fca5a5');
+                    updateUI();
+                    return;
+                }
+            }
+
+            // 자원 수집
+            for (let i = collectibles.length - 1; i >= 0; i--) {
+                const c = collectibles[i];
+                if (Math.hypot(c.x - x, c.y - y) <= c.radius + 18) {
+                    collectibles.splice(i, 1);
+                    sound.playPop('A5');
+                    if (c.type === 'sun') {
+                        state.sun += 12;
+                        createParticles(c.x, c.y, '#facc15', 8);
+                        showFloatingText(c.x, c.y, '+12☀️', '#fef08a');
+                    } else {
+                        state.water += 12;
+                        createParticles(c.x, c.y, '#38bdf8', 8);
+                        showFloatingText(c.x, c.y, '+12💧', '#bae6fd');
+                    }
+                    updateUI();
+                    return;
+                }
+            }
+        });
+
+        // 1. 수관 생장 버튼
+        document.getElementById('btn-grow').addEventListener('click', () => {
+            if (state.sun >= state.growCost.sun && state.water >= state.growCost.water) {
+                state.sun -= state.growCost.sun;
+                state.water -= state.growCost.water;
+                state.treeLevel++;
+                state.ventilation = Math.max(10, state.ventilation - 15); // 잎이 빽빽해져 통풍 감소
+                state.growCost.sun = Math.floor(state.growCost.sun * 1.3);
+                state.growCost.water = Math.floor(state.growCost.water * 1.3);
+
+                sound.playAction(['C4', 'E4', 'G4']);
+                createParticles(width / 2, groundY - 80, '#22c55e', 14);
+                showFloatingText(width / 2, groundY - 100, '비늘잎 생장! (통풍률 -15%)', '#86efac');
+                if (state.ventilation <= 45) {
+                    showBanner('⚠️ 경고: 잎 밀도가 너무 높아 내부 통풍이 불량합니다! 응애 발생 위험!');
+                }
+                updateUI();
+            }
+        });
+
+        // 2. 통풍 가지치기 버튼
+        document.getElementById('btn-prune').addEventListener('click', () => {
+            if (state.sun >= 15 && state.ventilation < 100) {
+                state.sun -= 15;
+                state.ventilation = Math.min(100, state.ventilation + 35);
+                sound.playAction(['G4', 'B4', 'D5']);
+                createParticles(width / 2, groundY - 70, '#2dd4bf', 12);
+                showFloatingText(width / 2, groundY - 85, '속잎 통풍 개선! +35%', '#5eead4');
+                showBanner('✂️ 가지치기로 내부 통풍이 원활해져 속잎 마름과 응애를 예방합니다.');
+                updateUI();
+            }
+        });
+
+        // 3. AI 수종 판별 스캔 버튼
+        document.getElementById('btn-scan').addEventListener('click', openVisionScanner);
+        document.getElementById('close-vision-btn').addEventListener('click', () => {
+            document.getElementById('vision-modal').classList.add('hidden');
+        });
+
+        // 4. 피톤치드(테르펜) 발산 버튼
+        document.getElementById('btn-phytoncide').addEventListener('click', () => {
+            if (state.sun >= 25 && state.water >= 25) {
+                state.sun -= 25;
+                state.water -= 25;
+                state.phytoncideWave = 10; // 파동 시작
+                state.hp = Math.min(100, state.hp + 20);
+                
+                // 화면 내 모든 응애 일망타진
+                const killed = mites.length;
+                mites.forEach(m => createParticles(m.x, m.y, '#34d399', 10));
+                state.stats.bugsKilled += killed;
+                mites = [];
+
+                sound.playAction(['F4', 'A4', 'C5', 'F5']);
+                showFloatingText(width / 2, groundY - 110, `🌿 피톤치드(테르펜) 방출! 응애 ${killed}마리 퇴치`, '#6ee7b7');
+                showBanner('🌿 침엽수 자기방어 물질 테르펜이 발산되어 해충을 퇴치하고 수목을 보호합니다!');
+                updateUI();
+            }
+        });
+
+        // 탐구 노트 모달 제어
+        document.getElementById('note-btn').addEventListener('click', () => {
+            document.getElementById('note-modal').classList.remove('hidden');
+        });
+        document.getElementById('close-note-btn').addEventListener('click', () => {
+            document.getElementById('note-modal').classList.add('hidden');
+        });
+        document.getElementById('sound-toggle').addEventListener('click', (e) => {
+            sound.enabled = !sound.enabled;
+            e.target.innerText = sound.enabled ? '🔊' : '🔇';
+        });
+
+        // --- 8. UI 업데이트 및 루프 ---
+        function damageTree(amount) {
+            state.hp = Math.max(0, state.hp - amount);
+            sound.playAlert();
+            updateUI();
+            if (state.hp <= 0) endGame(false);
+        }
+
+        function updateUI() {
+            document.getElementById('day-display').innerText = state.day;
+            const timeEl = document.getElementById('time-display');
+            timeEl.innerText = state.isNight ? '밤 🌙' : '낮 ☀️';
+            timeEl.className = state.isNight ? 'text-indigo-300' : 'text-amber-300';
+
+            document.getElementById('sun-display').innerText = Math.floor(state.sun);
+            document.getElementById('water-display').innerText = Math.floor(state.water);
+            document.getElementById('hp-display').innerText = Math.floor(state.hp);
+
+            const ventEl = document.getElementById('vent-display');
+            ventEl.innerText = `${state.ventilation}%`;
+            ventEl.className = state.ventilation < 50 ? 'font-bold text-rose-400 text-xs sm:text-sm' : 'font-bold text-teal-300 text-xs sm:text-sm';
+
+            document.getElementById('lvl-tree').innerText = `Lv.${state.treeLevel}`;
+            document.getElementById('cost-grow-sun').innerText = state.growCost.sun;
+            document.getElementById('cost-grow-water').innerText = state.growCost.water;
+
+            const scanBtn = document.getElementById('btn-scan');
+            const scanLabel = document.getElementById('scan-cooldown');
+            if (state.scanCooldown > 0) {
+                scanBtn.disabled = true;
+                scanLabel.innerText = `${Math.ceil(state.scanCooldown)}초 대기`;
+            } else {
+                scanBtn.disabled = false;
+                scanLabel.innerText = '스캔 가능';
+            }
+
+            document.getElementById('btn-grow').disabled = !(state.sun >= state.growCost.sun && state.water >= state.growCost.water);
+            document.getElementById('btn-prune').disabled = !(state.sun >= 15 && state.ventilation < 100);
+            document.getElementById('btn-phytoncide').disabled = !(state.sun >= 25 && state.water >= 25);
+        }
+
+        function drawBackground() {
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, groundY);
+            if (state.isNight) {
+                skyGrad.addColorStop(0, '#0f172a');
+                skyGrad.addColorStop(1, '#1e1b4b');
+            } else {
+                skyGrad.addColorStop(0, '#0369a1');
+                skyGrad.addColorStop(1, '#bae6fd');
+            }
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, width, groundY);
+
+            // 교정 배경 실루엣 (학교 건물 느낌)
+            ctx.fillStyle = state.isNight ? 'rgba(15, 23, 42, 0.6)' : 'rgba(255, 255, 255, 0.25)';
+            ctx.fillRect(width * 0.08, groundY - 90, width * 0.22, 90);
+            ctx.fillRect(width * 0.72, groundY - 75, width * 0.20, 75);
+
+            // 땅
+            const groundGrad = ctx.createLinearGradient(0, groundY, 0, height);
+            groundGrad.addColorStop(0, '#3f2e21');
+            groundGrad.addColorStop(1, '#1c130d');
+            ctx.fillStyle = groundGrad;
+            ctx.fillRect(0, groundY, width, height - groundY);
+
+            ctx.fillStyle = state.isNight ? '#14532d' : '#16a34a';
+            ctx.fillRect(0, groundY - 4, width, 8);
+        }
+
+        let lastTime = 0, secTick = 0, spawnTick = 0;
+
+        function gameLoop(timestamp) {
+            if (!state.isRunning) return;
+            const dt = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+
+            state.windTime += 0.035;
+            if (state.scanCooldown > 0) state.scanCooldown = Math.max(0, state.scanCooldown - dt);
+            if (state.phytoncideWave > 0) {
+                state.phytoncideWave += 6;
+                if (state.phytoncideWave > 280) state.phytoncideWave = 0;
+            }
+
+            // 낮/밤 및 일수 경과
+            state.dayTimer += dt;
+            if (state.dayTimer >= CONFIG.DAY_DURATION) {
+                state.dayTimer = 0;
+                state.day++;
+                if (state.day > CONFIG.TARGET_DAYS) {
+                    endGame(true);
+                    return;
+                }
+                showBanner(`Day ${state.day}: 가이즈카향나무의 사계절 상록 생장이 계속됩니다.`);
+            }
+            state.isNight = state.dayTimer > (CONFIG.DAY_DURATION * 0.55);
+
+            // 1초마다 자원 생산 및 통풍 체크
+            secTick += dt;
+            if (secTick >= 1.0) {
+                secTick -= 1.0;
+                const sunGain = state.isNight ? 1 : (2 + state.treeLevel);
+                const waterGain = 2 + Math.floor(state.treeLevel * 0.8);
+                state.sun += sunGain;
+                state.water += waterGain;
+
+                // 통풍률이 30% 미만이면 속잎이 마르며 체력 서서히 감소
+                if (state.ventilation < 30) {
+                    damageTree(1);
+                }
+                updateUI();
+            }
+
+            // 자원 및 응애 스폰
+            spawnTick += dt;
+            if (spawnTick >= 2.2) {
+                spawnTick = 0;
+                collectibles.push(new Collectible(Math.random() < 0.5 ? 'sun' : 'water'));
+
+                // 통풍률이 낮을수록, 혹은 밤일수록 응애(병충해) 출현 확률 급증
+                const miteChance = (state.isNight ? 0.65 : 0.25) + ((100 - state.ventilation) / 150);
+                if (Math.random() < miteChance) {
+                    mites.push(new SpiderMite());
+                }
+            }
+
+            // 렌더링
+            ctx.clearRect(0, 0, width, height);
+            drawBackground();
+            drawKaizukaJuniper(ctx, state.windTime);
+
+            for (let i = collectibles.length - 1; i >= 0; i--) {
+                collectibles[i].update();
+                collectibles[i].draw(ctx);
+                if (collectibles[i].y > groundY) collectibles.splice(i, 1);
+            }
+
+            for (let i = mites.length - 1; i >= 0; i--) {
+                mites[i].update();
+                mites[i].draw(ctx);
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].update();
+                particles[i].draw(ctx);
+                if (particles[i].life <= 0) particles.splice(i, 1);
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        async function startGame() {
+            await sound.init();
+            state = {
+                isRunning: true,
+                day: 1,
+                dayTimer: 0,
+                isNight: false,
+                sun: 50,
+                water: 50,
+                hp: 100,
+                ventilation: 100,
+                treeLevel: 1,
+                growCost: { sun: 20, water: 20 },
+                scanCooldown: 0,
+                phytoncideWave: 0,
+                stats: { bugsKilled: 0, scansSuccess: 0 },
+                windTime: 0
+            };
+            collectibles = [];
+            mites = [];
+            particles = [];
+            resizeCanvas();
+            updateUI();
+
+            document.getElementById('game-modal').classList.add('hidden');
+            showBanner('가이즈카향나무 탐구 시작! [AI 수종 판별]과 [통풍 가지치기]를 활용하세요.');
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function endGame(isVictory) {
+            state.isRunning = false;
+            const modal = document.getElementById('game-modal');
+            const title = document.getElementById('modal-title');
+            const desc = document.getElementById('modal-desc');
+            const statsBox = document.getElementById('modal-stats');
+            const btn = document.getElementById('start-btn');
+
+            modal.classList.remove('hidden');
+            statsBox.classList.remove('hidden');
+
+            document.getElementById('stat-days').innerText = Math.min(state.day, CONFIG.TARGET_DAYS);
+            document.getElementById('stat-scans').innerText = state.stats.scansSuccess;
+            document.getElementById('stat-bugs').innerText = state.stats.bugsKilled;
+
+            if (isVictory) {
+                title.innerText = '🌲 학교 교정 수목 탐구 완료!';
+                title.className = 'game-title text-2xl sm:text-3xl text-emerald-400 mb-2';
+                desc.innerText = '훌륭합니다! 가이즈카향나무의 생태적 특성과 IT·생명과학 기술을 결합하여 건강하게 지켜냈습니다.';
+                btn.innerText = '다시 탐구하기';
+                sound.playAction(['C4', 'E4', 'G4', 'C5']);
+            } else {
+                title.innerText = '🍂 속잎 갈변 및 응애 피해 발생';
+                title.className = 'game-title text-2xl sm:text-3xl text-rose-400 mb-2';
+                desc.innerText = '밀도가 높아진 비늘잎의 통풍 관리와 테르펜 방어가 부족했습니다. 탐구노트를 참고해 다시 도전해보세요!';
+                btn.innerText = '다시 도전하기';
+            }
+        }
+
+        document.getElementById('start-btn').addEventListener('click', startGame);
+
+        // 초기 배경 미리보기 렌더링
+        drawBackground();
+        drawKaizukaJuniper(ctx, 0);
+    </script>
+</body>
+</html>
